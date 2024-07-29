@@ -1,0 +1,113 @@
+#include <iostream>
+#include <string>
+#include <thread>
+#include <vector>
+#include <cstring>
+#include <cstdlib>
+#include <unistd.h>
+#include <netinet/in.h>
+#include <fstream>
+#include <sstream>
+
+const int PORT = 8080;
+const int BACKLOG = 10; // Maximum number of pending connections
+
+void handleClient(int clientSocket) {
+    char buffer[1024];
+    memset(buffer, 0, sizeof(buffer));
+    
+    // Read the request from the client
+    read(clientSocket, buffer, sizeof(buffer) - 1);
+    std::string request(buffer);
+    
+    // Simple HTTP request parsing
+    std::istringstream requestStream(request);
+    std::string method, path;
+    requestStream >> method >> path;
+
+    // Default to serving index.html
+    if (path == "/") {
+        path = "/index.html";
+    }
+
+    // Remove leading slash from path
+    if (path[0] == '/') {
+        path = path.substr(1);
+    }
+
+    // Open the requested file
+    std::ifstream file(path);
+    std::string response;
+
+    if (file) {
+        std::ostringstream fileStream;
+        fileStream << file.rdbuf();
+        std::string fileContent = fileStream.str();
+
+        // Prepare a successful HTTP response
+        response = "HTTP/1.1 200 OK\r\n";
+        response += "Content-Length: " + std::to_string(fileContent.size()) + "\r\n";
+        response += "Content-Type: text/html\r\n";
+        response += "\r\n" + fileContent;
+    } else {
+        // Prepare a 404 Not Found response
+        response = "HTTP/1.1 404 Not Found\r\n";
+        response += "Content-Length: 0\r\n";
+        response += "\r\n";
+    }
+
+    // Send the response to the client
+    send(clientSocket, response.c_str(), response.size(), 0);
+    close(clientSocket);
+}
+
+int main() {
+    int serverSocket, clientSocket;
+    struct sockaddr_in serverAddr, clientAddr;
+    socklen_t clientAddrLen = sizeof(clientAddr);
+
+    // Create a socket
+    serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if (serverSocket < 0) {
+        std::cerr << "Error creating socket." << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    // Set up the server address
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    serverAddr.sin_port = htons(PORT);
+
+    // Bind the socket
+    if (bind(serverSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
+        std::cerr << "Error binding socket." << std::endl;
+        close(serverSocket);
+        return EXIT_FAILURE;
+    }
+
+    // Listen for incoming connections
+    if (listen(serverSocket, BACKLOG) < 0) {
+        std::cerr << "Error listening on socket." << std::endl;
+        close(serverSocket);
+        return EXIT_FAILURE;
+    }
+
+    std::cout << "Server is listening on port " << PORT << "..." << std::endl;
+
+    // Accept and handle client connections
+    while (true) {
+        clientSocket = accept(serverSocket, (struct sockaddr*)&clientAddr, &clientAddrLen);
+        if (clientSocket < 0) {
+            std::cerr << "Error accepting connection." << std::endl;
+            continue;
+        }
+
+        // Create a new thread to handle the client
+        std::thread clientThread(handleClient, clientSocket);
+        clientThread.detach(); // Detach the thread to allow it to run independently
+    }
+
+    // Close the server socket (this line will never be reached in this example)
+    close(serverSocket);
+    return EXIT_SUCCESS;
+}
